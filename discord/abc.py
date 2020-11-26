@@ -710,7 +710,7 @@ class GuildChannel:
     async def create_invite(self, *, reason=None, **fields):
         """|coro|
 
-        Creates an instant invite from a text or voice channel.
+        Creates an instant invite.
 
         You must have the :attr:`~Permissions.create_instant_invite` permission to
         do this.
@@ -737,9 +737,6 @@ class GuildChannel:
         -------
         ~discord.HTTPException
             Invite creation failed.
-
-        ~discord.NotFound
-            The channel that was passed is a category or an invalid channel.
 
         Returns
         --------
@@ -802,7 +799,7 @@ class Messageable(metaclass=abc.ABCMeta):
 
     async def send(self, content=None, *, tts=False, embed=None, file=None,
                                           files=None, delete_after=None, nonce=None,
-                                          allowed_mentions=None):
+                                          allowed_mentions=None, message_reference=None):
         """|coro|
 
         Sends a message to the destination with the content given.
@@ -848,6 +845,11 @@ class Messageable(metaclass=abc.ABCMeta):
 
             .. versionadded:: 1.4
 
+        message_reference: :class:`discord.MessageReference`
+            Message to which you are replying. If this is passed, then you should
+
+            .. versionadded:: 2.0
+
         Raises
         --------
         ~discord.HTTPException
@@ -878,6 +880,9 @@ class Messageable(metaclass=abc.ABCMeta):
         else:
             allowed_mentions = state.allowed_mentions and state.allowed_mentions.to_dict()
 
+        if message_reference is not None:
+            message_reference = message_reference.to_dict()
+
         if file is not None and files is not None:
             raise InvalidArgument('cannot pass both file and files parameter to send()')
 
@@ -887,7 +892,8 @@ class Messageable(metaclass=abc.ABCMeta):
 
             try:
                 data = await state.http.send_files(channel.id, files=[file], allowed_mentions=allowed_mentions,
-                                                   content=content, tts=tts, embed=embed, nonce=nonce)
+                                                   content=content, tts=tts, embed=embed, nonce=nonce,
+                                                   message_reference=message_reference)
             finally:
                 file.close()
 
@@ -899,13 +905,15 @@ class Messageable(metaclass=abc.ABCMeta):
 
             try:
                 data = await state.http.send_files(channel.id, files=files, content=content, tts=tts,
-                                                   embed=embed, nonce=nonce, allowed_mentions=allowed_mentions)
+                                                   embed=embed, nonce=nonce, allowed_mentions=allowed_mentions,
+                                                   message_reference=message_reference)
             finally:
                 for f in files:
                     f.close()
         else:
             data = await state.http.send_message(channel.id, content, tts=tts, embed=embed,
-                                                                      nonce=nonce, allowed_mentions=allowed_mentions)
+                                                                      nonce=nonce, allowed_mentions=allowed_mentions,
+                                                                      message_reference=message_reference)
 
         ret = state.create_message(channel=channel, data=data)
         if delete_after is not None:

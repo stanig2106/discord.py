@@ -43,7 +43,6 @@ from .file import File
 from .utils import escape_mentions
 from .guild import Guild
 from .mixins import Hashable
-from .sticker import Sticker
 
 
 class Attachment:
@@ -233,6 +232,24 @@ class MessageReference:
         self.guild_id = utils._get_as_snowflake(kwargs, 'guild_id')
         self._state = state
 
+    @classmethod
+    def from_message(cls, message):
+        """Creates a :class:`discord.MessageReference` from an existing :class:`discord.Message`
+
+        .. versionadded:: 2.0
+
+        Parameters
+        ----------
+        message: :class:`discord.Message`
+            The message to be converted into a reference.
+
+        Returns
+        -------
+        :class:`discord.MessageReference`
+            A reference to the message
+        """
+        return cls(message._state, message_id=message.id, channel_id=message.channel.id, guild_id=message.guild and message.guild.id)
+
     @property
     def cached_message(self):
         """Optional[:class:`Message`]: The cached message, if found in the internal message cache."""
@@ -241,17 +258,29 @@ class MessageReference:
     def __repr__(self):
         return '<MessageReference message_id={0.message_id!r} channel_id={0.channel_id!r} guild_id={0.guild_id!r}>'.format(self)
 
+    def to_dict(self):
+        """Converts the message reference to a dict, for transmission via the gateway.
+
+        .. versionadded:: 2.0
+
+        Returns
+        -------
+        :class:`dict`
+            The reference as a dict.
+        """
+        return {
+            'message_id': self.message_id,
+            'channel_id': self.channel_id,
+            'guild_id': self.guild_id
+        }
+
 def flatten_handlers(cls):
     prefix = len('_handle_')
-    handlers = [
-        (key[prefix:], value)
+    cls._HANDLERS = {
+        key[prefix:]: value
         for key, value in cls.__dict__.items()
-        if key.startswith('_handle_') and key != '_handle_member'
-    ]
-
-    # store _handle_member last
-    handlers.append(('member', cls._handle_member))
-    cls._HANDLERS = handlers
+        if key.startswith('_handle_')
+    }
     cls._CACHED_SLOTS = [
         attr for attr in cls.__slots__ if attr.startswith('_cs_')
     ]
@@ -353,10 +382,6 @@ class Message(Hashable):
         - ``description``: A string representing the application's description.
         - ``icon``: A string representing the icon ID of the application.
         - ``cover_image``: A string representing the embed's image asset ID.
-    stickers: List[:class:`Sticker`]
-        A list of stickers given to the message.
-
-        .. versionadded:: 1.6
     """
 
     __slots__ = ('_edited_timestamp', 'tts', 'content', 'channel', 'webhook_id',
@@ -364,8 +389,8 @@ class Message(Hashable):
                  '_cs_channel_mentions', '_cs_raw_mentions', 'attachments',
                  '_cs_clean_content', '_cs_raw_channel_mentions', 'nonce', 'pinned',
                  'role_mentions', '_cs_raw_role_mentions', 'type', 'call', 'flags',
-                 '_cs_system_content', '_cs_guild', '_state', 'reactions', 'reference',
-                 'application', 'activity', 'stickers')
+                 '_cs_system_content', '_cs_guild', '_state', 'reactions', 'reference', 
+                 'application', 'activity')
 
     def __init__(self, *, state, channel, data):
         self._state = state
@@ -385,7 +410,6 @@ class Message(Hashable):
         self.tts = data['tts']
         self.content = data['content']
         self.nonce = data.get('nonce')
-        self.stickers = [Sticker(data=data, state=state) for data in data.get('stickers', [])]
 
         ref = data.get('message_reference')
         self.reference = MessageReference(state, **ref) if ref is not None else None
@@ -456,13 +480,10 @@ class Message(Hashable):
         return reaction
 
     def _update(self, data):
-        # In an update scheme, 'author' key has to be handled before 'member'
-        # otherwise they overwrite each other which is undesirable.
-        # Since there's no good way to do this we have to iterate over every
-        # handler rather than iterating over the keys which is a little slower
-        for key, handler in self._HANDLERS:
+        handlers = self._HANDLERS
+        for key, value in data.items():
             try:
-                value = data[key]
+                handler = handlers[key]
             except KeyError:
                 continue
             else:
@@ -1127,3 +1148,74 @@ class Message(Hashable):
         if state.is_bot:
             raise ClientException('Must not be a bot account to ack messages.')
         return await state.http.ack_message(self.channel.id, self.id)
+
+    async def reply(self, content=None, *, tts=False, embed=None, file=None,
+                                          files=None, delete_after=None, nonce=None,
+                                          allowed_mentions=None):
+        """|coro|
+
+        Replies to the message with the content given.
+
+        The content must be a type that can convert to a string through ``str(content)``.
+        If the content is set to ``None`` (the default), then the ``embed`` parameter must
+        be provided.
+
+        To upload a single file, the ``file`` parameter should be used with a
+        single :class:`~discord.File` object. To upload multiple files, the ``files``
+        parameter should be used with a :class:`list` of :class:`~discord.File` objects.
+        **Specifying both parameters will lead to an exception**.
+
+        If the ``embed`` parameter is provided, it must be of type :class:`~discord.Embed` and
+        it must be a rich embed type.
+
+        Parameters
+        ------------
+        content: :class:`str`
+            The content of the message to send.
+        tts: :class:`bool`
+            Indicates if the message should be sent using text-to-speech.
+        embed: :class:`~discord.Embed`
+            The rich embed for the content.
+        file: :class:`~discord.File`
+            The file to upload.
+        files: List[:class:`~discord.File`]
+            A list of files to upload. Must be a maximum of 10.
+        nonce: :class:`int`
+            The nonce to use for sending this message. If the message was successfully sent,
+            then the message will have a nonce with this value.
+        delete_after: :class:`float`
+            If provided, the number of seconds to wait in the background
+            before deleting the message we just sent. If the deletion fails,
+            then it is silently ignored.
+        allowed_mentions: :class:`~discord.AllowedMentions`
+            Controls the mentions being processed in this message. If this is
+            passed, then the object is merged with :attr:`~discord.Client.allowed_mentions`.
+            The merging behaviour only overrides attributes that have been explicitly passed
+            to the object, otherwise it uses the attributes set in :attr:`~discord.Client.allowed_mentions`.
+            If no object is passed at all then the defaults given by :attr:`~discord.Client.allowed_mentions`
+            are used instead.
+        message_reference: :class:`discord.MessageReference`
+            Message to which you are replying to.
+
+            .. versionadded:: 2.0
+
+        Raises
+        --------
+        ~discord.HTTPException
+            Sending the message failed.
+        ~discord.Forbidden
+            You do not have the proper permissions to send the message.
+        ~discord.InvalidArgument
+            The ``files`` list is not of the appropriate size or
+            you specified both ``file`` and ``files``.
+
+        Returns
+        ---------
+        :class:`~discord.Message`
+            The message that was sent.
+        """
+
+        reference = MessageReference.from_message(self)
+        await self.channel.send(content, tts=tts, embed=embed, file=file,
+                                files=files, delete_after=delete_after, nonce=nonce,
+                                allowed_mentions=allowed_mentions, message_reference=reference)
